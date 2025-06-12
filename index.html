@@ -100,6 +100,11 @@
       font-size: 1.2rem;
       margin-top: 1rem;
     }
+
+    .loading {
+      opacity: 0.6;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -143,29 +148,95 @@
       thumbEmoji.classList.remove("hovered");
     });
 
+    // Función JSONP para enviar datos sin problemas de CORS
+    function enviarConJSONP(mood, ip) {
+      return new Promise((resolve, reject) => {
+        const callbackName = 'jsonp_callback_' + Math.round(100000 * Math.random());
+        
+        // Crear función callback global
+        window[callbackName] = function(data) {
+          delete window[callbackName];
+          document.body.removeChild(script);
+          resolve(data);
+        };
+        
+        // Crear script tag para JSONP
+        const script = document.createElement('script');
+        const url = 'https://script.google.com/macros/s/AKfycbyE_LkFHy13uwdZl4jO3gHaWsqzq8OB7Ho8Spiuv0yW1rK2GWpXO3uSFwp_xAx2-kKW/exec';
+        script.src = `${url}?callback=${callbackName}&mood=${encodeURIComponent(mood)}&ip=${encodeURIComponent(ip)}`;
+        
+        script.onerror = function() {
+          delete window[callbackName];
+          document.body.removeChild(script);
+          reject(new Error('Error al enviar datos'));
+        };
+        
+        document.body.appendChild(script);
+      });
+    }
+
     async function enviar() {
-      if (localStorage.getItem("encuesta_enviada")) return;
-      localStorage.setItem("encuesta_enviada", "true");
+      // Verificar si ya se envió
+      if (localStorage.getItem("encuesta_enviada")) {
+        alert("¡Ya enviaste tu respuesta anteriormente!");
+        return;
+      }
 
-      slider.disabled = true;
-      document.getElementById("submitBtn").style.display = "none";
-      document.getElementById("thanks").style.display = "block";
-      triggerExplosion();
+      const submitBtn = document.getElementById("submitBtn");
+      const thanks = document.getElementById("thanks");
 
-      const mood = Math.round(+slider.value);
-      const ip = await fetch("https://api64.ipify.org?format=json")
-        .then(res => res.json()).then(data => data.ip);
+      // Mostrar estado de carga
+      submitBtn.textContent = "Enviando...";
+      submitBtn.classList.add("loading");
 
-      fetch("https://script.google.com/macros/s/AKfycbyE_LkFHy13uwdZl4jO3gHaWsqzq8OB7Ho8Spiuv0yW1rK2GWpXO3uSFwp_xAx2-kKW/exec", {
-        method: "POST",
-        body: JSON.stringify({ mood, ip }),
-        headers: { "Content-Type": "application/json" },
-      })
-      .then(res => res.text())
-      .then(data => console.log("Respuesta del servidor:", data))
-      .catch(err => console.error("Error al enviar datos:", err));
+      try {
+        const mood = Math.round(+slider.value);
+        
+        // Obtener IP del usuario
+        let ip = "Unknown";
+        try {
+          const ipResponse = await fetch("https://api64.ipify.org?format=json");
+          const ipData = await ipResponse.json();
+          ip = ipData.ip;
+        } catch (err) {
+          console.log("No se pudo obtener la IP, usando 'Unknown'");
+        }
 
-      setTimeout(() => window.close(), 3000);
+        // Enviar datos usando JSONP
+        const response = await enviarConJSONP(mood, ip);
+        
+        if (response.status === "success") {
+          // Marcar como enviado
+          localStorage.setItem("encuesta_enviada", "true");
+          
+          // Ocultar formulario y mostrar agradecimiento
+          slider.disabled = true;
+          submitBtn.style.display = "none";
+          thanks.style.display = "block";
+          
+          // Activar explosión de emojis
+          triggerExplosion();
+          
+          console.log("Datos enviados correctamente:", response);
+          
+          // Cerrar ventana después de 3 segundos (opcional)
+          setTimeout(() => {
+            if (window.opener) {
+              window.close();
+            }
+          }, 3000);
+        } else {
+          throw new Error(response.message || "Error desconocido");
+        }
+
+      } catch (error) {
+        console.error("Error al enviar datos:", error);
+        alert("Hubo un error al enviar tu respuesta. Por favor, intenta nuevamente.");
+        
+        // Restaurar botón
+        submitBtn.textContent = "Enviar";
+        submitBtn.classList.remove("loading");
+      }
     }
 
     const canvas = document.getElementById("ballpit");
@@ -240,15 +311,15 @@
       }
 
       for (let i = emojis.length - 1; i >= 0; i--) {
-        const e = emojis[i];
+        const emoji = emojis[i];
         ctx.font = "32px sans-serif";
-        ctx.globalAlpha = e.life / 100;
-        ctx.fillText(e.char, e.x, e.y);
+        ctx.globalAlpha = emoji.life / 100;
+        ctx.fillText(emoji.char, emoji.x, emoji.y);
         ctx.globalAlpha = 1;
-        e.x += e.vx;
-        e.y += e.vy;
-        e.life--;
-        if (e.life <= 0) emojis.splice(i, 1);
+        emoji.x += emoji.vx;
+        emoji.y += emoji.vy;
+        emoji.life--;
+        if (emoji.life <= 0) emojis.splice(i, 1);
       }
 
       requestAnimationFrame(animate);
@@ -263,6 +334,13 @@
     resize();
     createBalls();
     animate();
+
+    // Verificar si ya se envió al cargar la página
+    if (localStorage.getItem("encuesta_enviada")) {
+      slider.disabled = true;
+      document.getElementById("submitBtn").style.display = "none";
+      document.getElementById("thanks").style.display = "block";
+    }
   </script>
 
 </body>
