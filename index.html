@@ -156,7 +156,7 @@
       const ip = await fetch("https://api64.ipify.org?format=json")
         .then(res => res.json()).then(data => data.ip);
 
-      fetch("https://script.google.com/macros/s/AKfycbzuElPG84vTEjAjTPZNhZYWN09QpbX1QlN7JuX0hn45vDxqtuNwEFkWjAJIy6_sCFm1/exec", {
+      fetch("https://script.google.com/macros/s/AKfycbyE_LkFHy13uwdZl4jO3gHaWsqzq8OB7Ho8Spiuv0yW1rK2GWpXO3uSFwp_xAx2-kKW/exec", {
         method: "POST",
         body: JSON.stringify({ mood, ip }),
         headers: { "Content-Type": "application/json" },
