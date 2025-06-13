@@ -24,7 +24,7 @@
       top: 0; left: 0;
       width: 100vw; height: 100vh;
       z-index: 0;
-      pointer-events: none;
+      pointer-events: auto;
     }
 
     h1 {
@@ -105,9 +105,48 @@
       opacity: 0.6;
       pointer-events: none;
     }
+
+    /* Panel de administrador */
+    .admin-panel {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 10px;
+      border-radius: 5px;
+      font-size: 0.8rem;
+      z-index: 1000;
+      display: none;
+    }
+
+    .admin-toggle {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: transparent;
+      border: none;
+      color: transparent;
+      font-size: 1px;
+      width: 20px;
+      height: 20px;
+      z-index: 1001;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
+
+  <!-- Botón invisible para acceder al panel de admin -->
+  <button class="admin-toggle" onclick="toggleAdmin()" title="Admin">·</button>
+
+  <!-- Panel de administrador -->
+  <div class="admin-panel" id="adminPanel">
+    <strong>📊 Resumen de Respuestas:</strong>
+    <div id="statsDisplay"></div>
+    <button onclick="exportarDatos()" style="margin-top: 5px; font-size: 0.7rem;">Exportar CSV</button>
+    <button onclick="limpiarDatos()" style="margin-top: 5px; font-size: 0.7rem; background: #666;">Limpiar</button>
+  </div>
 
   <canvas id="ballpit"></canvas>
 
@@ -126,6 +165,10 @@
     const slider = document.getElementById("moodSlider");
     const thumbEmoji = document.getElementById("thumbEmoji");
     const caras = ["😬", "🙁", "😟", "☹️", "😐", "🙂", "😌", "😊", "😄", "🔥", "🚛"];
+
+    // Variables globales para datos en memoria (sin localStorage)
+    let respuestas = [];
+    let userSubmitted = false;
 
     function updateEmoji() {
       const val = +slider.value;
@@ -148,37 +191,68 @@
       thumbEmoji.classList.remove("hovered");
     });
 
-    // Función JSONP para enviar datos sin problemas de CORS
-    function enviarConJSONP(mood, ip) {
-      return new Promise((resolve, reject) => {
-        const callbackName = 'jsonp_callback_' + Math.round(100000 * Math.random());
-        
-        // Crear función callback global
-        window[callbackName] = function(data) {
-          delete window[callbackName];
-          document.body.removeChild(script);
-          resolve(data);
-        };
-        
-        // Crear script tag para JSONP
-        const script = document.createElement('script');
-        const url = 'https://script.google.com/macros/s/AKfycbyE_LkFHy13uwdZl4jO3gHaWsqzq8OB7Ho8Spiuv0yW1rK2GWpXO3uSFwp_xAx2-kKW/exec';
-        script.src = `${url}?callback=${callbackName}&mood=${encodeURIComponent(mood)}&ip=${encodeURIComponent(ip)}`;
-        
-        script.onerror = function() {
-          delete window[callbackName];
-          document.body.removeChild(script);
-          reject(new Error('Error al enviar datos'));
-        };
-        
-        document.body.appendChild(script);
-      });
+    // Funciones de almacenamiento compatibles
+    function safeSetItem(key, value) {
+      try {
+        localStorage.setItem(key, value);
+        return true;
+      } catch (e) {
+        // Si localStorage no funciona, usar variables globales
+        if (key === 'mood_responses') {
+          respuestas = JSON.parse(value);
+        } else if (key === 'user_submitted_today') {
+          userSubmitted = true;
+        }
+        return true;
+      }
     }
 
+    function safeGetItem(key) {
+      try {
+        return localStorage.getItem(key);
+      } catch (e) {
+        // Si localStorage no funciona, usar variables globales
+        if (key === 'mood_responses') {
+          return JSON.stringify(respuestas);
+        } else if (key === 'user_submitted_today') {
+          return userSubmitted ? new Date().toDateString() : null;
+        }
+        return null;
+      }
+    }
+
+    // Función para guardar respuesta
+    function guardarRespuesta(mood) {
+      const timestamp = Date.now();
+      const fecha = new Date().toLocaleString('es-AR');
+      
+      const entrada = {
+        id: timestamp,
+        fecha: fecha,
+        mood: mood,
+        timestamp: timestamp
+      };
+
+      // Obtener respuestas existentes
+      let respuestasActuales = JSON.parse(safeGetItem('mood_responses') || '[]');
+      
+      // Agregar nueva respuesta
+      respuestasActuales.push(entrada);
+      
+      // Guardar de vuelta
+      safeSetItem('mood_responses', JSON.stringify(respuestasActuales));
+      
+      return true;
+    }
+
+    // Función principal de envío
     async function enviar() {
       // Verificar si ya se envió
-      if (localStorage.getItem("encuesta_enviada")) {
-        alert("¡Ya enviaste tu respuesta anteriormente!");
+      const yaEnviado = safeGetItem('user_submitted_today');
+      const hoy = new Date().toDateString();
+      
+      if (yaEnviado === hoy) {
+        alert("¡Ya enviaste tu respuesta!");
         return;
       }
 
@@ -192,22 +266,12 @@
       try {
         const mood = Math.round(+slider.value);
         
-        // Obtener IP del usuario
-        let ip = "Unknown";
-        try {
-          const ipResponse = await fetch("https://api64.ipify.org?format=json");
-          const ipData = await ipResponse.json();
-          ip = ipData.ip;
-        } catch (err) {
-          console.log("No se pudo obtener la IP, usando 'Unknown'");
-        }
-
-        // Enviar datos usando JSONP
-        const response = await enviarConJSONP(mood, ip);
+        // Guardar respuesta
+        const guardado = guardarRespuesta(mood);
         
-        if (response.status === "success") {
+        if (guardado) {
           // Marcar como enviado
-          localStorage.setItem("encuesta_enviada", "true");
+          safeSetItem('user_submitted_today', hoy);
           
           // Ocultar formulario y mostrar agradecimiento
           slider.disabled = true;
@@ -217,16 +281,20 @@
           // Activar explosión de emojis
           triggerExplosion();
           
-          console.log("Datos enviados correctamente:", response);
+          // Actualizar estadísticas si el panel está visible
+          actualizarStats();
           
-          // Cerrar ventana después de 3 segundos (opcional)
+          console.log("Respuesta guardada correctamente");
+          
+          // Cerrar ventana automáticamente después de 3 segundos si es popup
           setTimeout(() => {
             if (window.opener) {
               window.close();
             }
           }, 3000);
+          
         } else {
-          throw new Error(response.message || "Error desconocido");
+          throw new Error("Error al guardar la respuesta");
         }
 
       } catch (error) {
@@ -239,6 +307,97 @@
       }
     }
 
+    // === FUNCIONES DE ADMINISTRADOR ===
+    
+    function toggleAdmin() {
+      const panel = document.getElementById('adminPanel');
+      if (panel.style.display === 'none' || panel.style.display === '') {
+        panel.style.display = 'block';
+        actualizarStats();
+      } else {
+        panel.style.display = 'none';
+      }
+    }
+
+    function actualizarStats() {
+      const respuestasData = JSON.parse(safeGetItem('mood_responses') || '[]');
+      const statsDiv = document.getElementById('statsDisplay');
+      
+      if (respuestasData.length === 0) {
+        statsDiv.innerHTML = '<div>No hay respuestas aún</div>';
+        return;
+      }
+
+      // Calcular estadísticas básicas
+      const total = respuestasData.length;
+      const suma = respuestasData.reduce((acc, r) => acc + r.mood, 0);
+      const promedio = (suma / total).toFixed(1);
+      
+      // Contar por nivel de ánimo
+      const conteos = {};
+      respuestasData.forEach(r => {
+        conteos[r.mood] = (conteos[r.mood] || 0) + 1;
+      });
+
+      let html = `
+        <div>Total respuestas: ${total}</div>
+        <div>Promedio: ${promedio}/10</div>
+        <div style="margin-top: 5px; font-size: 0.7rem;">
+      `;
+      
+      for (let i = 0; i <= 10; i++) {
+        if (conteos[i]) {
+          html += `<div>${i}: ${conteos[i]} ${caras[i]}</div>`;
+        }
+      }
+      
+      html += '</div>';
+      statsDiv.innerHTML = html;
+    }
+
+    function exportarDatos() {
+      const respuestasData = JSON.parse(safeGetItem('mood_responses') || '[]');
+      
+      if (respuestasData.length === 0) {
+        alert('No hay datos para exportar');
+        return;
+      }
+
+      // Crear CSV simple
+      let csv = 'Fecha,Estado_Animo\n';
+      respuestasData.forEach(r => {
+        csv += `"${r.fecha}",${r.mood}\n`;
+      });
+
+      // Descargar
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', 'mood-data-' + new Date().toISOString().split('T')[0] + '.csv');
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function limpiarDatos() {
+      if (confirm('¿Estás seguro de que quieres eliminar todos los datos?')) {
+        try {
+          localStorage.removeItem('mood_responses');
+          localStorage.removeItem('user_submitted_today');
+        } catch (e) {
+          // Si localStorage no funciona, limpiar variables globales
+          respuestas = [];
+          userSubmitted = false;
+        }
+        actualizarStats();
+        alert('Datos eliminados');
+      }
+    }
+
+    // === BALLPIT ANIMATION ===
+    
     const canvas = document.getElementById("ballpit");
     const ctx = canvas.getContext("2d");
     let w, h;
@@ -252,6 +411,7 @@
     }
 
     function createBalls(n = 60) {
+      balls.length = 0; // Limpiar array primero
       for (let i = 0; i < n; i++) {
         balls.push({
           x: Math.random() * w,
@@ -282,10 +442,13 @@
     function animate() {
       ctx.clearRect(0, 0, w, h);
 
+      // Animar bolas
       for (let b of balls) {
+        // Ruido aleatorio
         b.vx += (Math.random() - 0.5) * 0.2;
         b.vy += (Math.random() - 0.5) * 0.2;
 
+        // Repulsión del mouse
         const dx = b.x - mouse.x;
         const dy = b.y - mouse.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -295,21 +458,32 @@
           b.vy += dy / dist * f * 2.5;
         }
 
+        // Actualizar posición
         b.x += b.vx;
         b.y += b.vy;
 
-        if (b.x < 0 || b.x > w) b.vx *= -1;
-        if (b.y < 0 || b.y > h) b.vy *= -1;
+        // Rebotar en bordes
+        if (b.x < b.r || b.x > w - b.r) {
+          b.vx *= -0.8;
+          b.x = Math.max(b.r, Math.min(w - b.r, b.x));
+        }
+        if (b.y < b.r || b.y > h - b.r) {
+          b.vy *= -0.8;
+          b.y = Math.max(b.r, Math.min(h - b.r, b.y));
+        }
 
+        // Fricción
         b.vx *= 0.93;
         b.vy *= 0.93;
 
+        // Dibujar bola
         ctx.beginPath();
         ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
         ctx.fillStyle = b.color;
         ctx.fill();
       }
 
+      // Animar emojis de explosión
       for (let i = emojis.length - 1; i >= 0; i--) {
         const emoji = emojis[i];
         ctx.font = "32px sans-serif";
@@ -325,22 +499,32 @@
       requestAnimationFrame(animate);
     }
 
-    window.addEventListener("mousemove", e => {
-      mouse.x = e.clientX;
-      mouse.y = e.clientY;
+    // Event listeners
+    canvas.addEventListener("mousemove", e => {
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = e.clientX - rect.left;
+      mouse.y = e.clientY - rect.top;
     });
 
-    window.addEventListener("resize", resize);
-    resize();
-    createBalls();
-    animate();
-
+    window.addEventListener("resize", () => {
+      resize();
+      createBalls();
+    });
+    
     // Verificar si ya se envió al cargar la página
-    if (localStorage.getItem("encuesta_enviada")) {
+    const yaEnviado = safeGetItem('user_submitted_today');
+    const hoy = new Date().toDateString();
+    
+    if (yaEnviado === hoy) {
       slider.disabled = true;
       document.getElementById("submitBtn").style.display = "none";
       document.getElementById("thanks").style.display = "block";
     }
+
+    // Inicializar
+    resize();
+    createBalls();
+    animate();
   </script>
 
 </body>
