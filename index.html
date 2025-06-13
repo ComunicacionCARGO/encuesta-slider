@@ -118,6 +118,9 @@
       font-size: 0.8rem;
       z-index: 1000;
       display: none;
+      max-width: 300px;
+      max-height: 400px;
+      overflow-y: auto;
     }
 
     .admin-toggle {
@@ -143,9 +146,9 @@
   <!-- Panel de administrador -->
   <div class="admin-panel" id="adminPanel">
     <strong>📊 Resumen de Respuestas:</strong>
-    <div id="statsDisplay"></div>
+    <div id="statsDisplay">Cargando...</div>
+    <button onclick="cargarDatos()" style="margin-top: 5px; font-size: 0.7rem;">Actualizar</button>
     <button onclick="exportarDatos()" style="margin-top: 5px; font-size: 0.7rem;">Exportar CSV</button>
-    <button onclick="limpiarDatos()" style="margin-top: 5px; font-size: 0.7rem; background: #666;">Limpiar</button>
   </div>
 
   <canvas id="ballpit"></canvas>
@@ -162,12 +165,15 @@
   <div class="thanks" id="thanks">¡Gracias por sumarte a arrancar con energía! 🚀</div>
 
   <script>
+    // *** CONFIGURACIÓN - CAMBIA ESTA URL POR LA TUYA ***
+    const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbywY-IC2VIKg4897suc7gFz1Q2ran-s4qPuF6aGqO6Vi6bP0Z6OD6EabC1OXJcgTELYbA/exec';
+    
     const slider = document.getElementById("moodSlider");
     const thumbEmoji = document.getElementById("thumbEmoji");
     const caras = ["😬", "🙁", "😟", "☹️", "😐", "🙂", "😌", "😊", "😄", "🔥", "🚛"];
 
-    // Variables globales para datos en memoria (sin localStorage)
-    let respuestas = [];
+    // Variables globales para datos
+    let datosServidor = [];
     let userSubmitted = false;
 
     function updateEmoji() {
@@ -191,68 +197,82 @@
       thumbEmoji.classList.remove("hovered");
     });
 
-    // Funciones de almacenamiento compatibles
-    function safeSetItem(key, value) {
-      try {
-        localStorage.setItem(key, value);
-        return true;
-      } catch (e) {
-        // Si localStorage no funciona, usar variables globales
-        if (key === 'mood_responses') {
-          respuestas = JSON.parse(value);
-        } else if (key === 'user_submitted_today') {
-          userSubmitted = true;
-        }
-        return true;
-      }
-    }
-
-    function safeGetItem(key) {
-      try {
-        return localStorage.getItem(key);
-      } catch (e) {
-        // Si localStorage no funciona, usar variables globales
-        if (key === 'mood_responses') {
-          return JSON.stringify(respuestas);
-        } else if (key === 'user_submitted_today') {
-          return userSubmitted ? new Date().toDateString() : null;
-        }
-        return null;
-      }
-    }
-
-    // Función para guardar respuesta
-    function guardarRespuesta(mood) {
+    // Función para enviar datos a Google Sheets
+    async function enviarAGoogleSheets(mood) {
       const timestamp = Date.now();
       const fecha = new Date().toLocaleString('es-AR');
       
-      const entrada = {
-        id: timestamp,
+      const datos = {
         fecha: fecha,
         mood: mood,
         timestamp: timestamp
       };
 
-      // Obtener respuestas existentes
-      let respuestasActuales = JSON.parse(safeGetItem('mood_responses') || '[]');
-      
-      // Agregar nueva respuesta
-      respuestasActuales.push(entrada);
-      
-      // Guardar de vuelta
-      safeSetItem('mood_responses', JSON.stringify(respuestasActuales));
-      
-      return true;
+      try {
+        const response = await fetch(GOOGLE_SCRIPT_URL, {
+          method: 'POST',
+          mode: 'cors',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(datos)
+        });
+
+        const result = await response.json();
+        
+        if (result.success) {
+          console.log('Datos enviados correctamente a Google Sheets');
+          return true;
+        } else {
+          throw new Error(result.error || 'Error desconocido');
+        }
+      } catch (error) {
+        console.error('Error al enviar a Google Sheets:', error);
+        throw error;
+      }
+    }
+
+    // Función para cargar datos desde Google Sheets
+    async function cargarDatos() {
+      try {
+        const response = await fetch(GOOGLE_SCRIPT_URL + '?action=get', {
+          method: 'GET',
+          mode: 'cors'
+        });
+
+        const result = await response.json();
+        
+        if (result.success) {
+          datosServidor = result.data;
+          actualizarStats();
+          return true;
+        } else {
+          throw new Error(result.error || 'Error al cargar datos');
+        }
+      } catch (error) {
+        console.error('Error al cargar datos:', error);
+        document.getElementById('statsDisplay').innerHTML = 'Error al cargar datos del servidor';
+        return false;
+      }
+    }
+
+    // Variables para controlar envío (sin usar sessionStorage)
+    let yaEnviado = false;
+
+    // Función para verificar si ya se envió hoy
+    function yaEnvioHoy() {
+      return yaEnviado;
+    }
+
+    function marcarComoEnviado() {
+      yaEnviado = true;
     }
 
     // Función principal de envío
     async function enviar() {
       // Verificar si ya se envió
-      const yaEnviado = safeGetItem('user_submitted_today');
-      const hoy = new Date().toDateString();
-      
-      if (yaEnviado === hoy) {
-        alert("¡Ya enviaste tu respuesta!");
+      if (yaEnvioHoy()) {
+        alert("¡Ya enviaste tu respuesta hoy!");
         return;
       }
 
@@ -266,36 +286,26 @@
       try {
         const mood = Math.round(+slider.value);
         
-        // Guardar respuesta
-        const guardado = guardarRespuesta(mood);
+        // Enviar a Google Sheets
+        await enviarAGoogleSheets(mood);
         
-        if (guardado) {
-          // Marcar como enviado
-          safeSetItem('user_submitted_today', hoy);
-          
-          // Ocultar formulario y mostrar agradecimiento
-          slider.disabled = true;
-          submitBtn.style.display = "none";
-          thanks.style.display = "block";
-          
-          // Activar explosión de emojis
-          triggerExplosion();
-          
-          // Actualizar estadísticas si el panel está visible
-          actualizarStats();
-          
-          console.log("Respuesta guardada correctamente");
-          
-          // Cerrar ventana automáticamente después de 3 segundos si es popup
-          setTimeout(() => {
-            if (window.opener) {
-              window.close();
-            }
-          }, 3000);
-          
-        } else {
-          throw new Error("Error al guardar la respuesta");
+        // Marcar como enviado
+        marcarComoEnviado();
+        
+        // Ocultar formulario y mostrar agradecimiento
+        slider.disabled = true;
+        submitBtn.style.display = "none";
+        thanks.style.display = "block";
+        
+        // Activar explosión de emojis
+        triggerExplosion();
+        
+        // Cargar datos actualizados si el panel está visible
+        if (document.getElementById('adminPanel').style.display === 'block') {
+          setTimeout(cargarDatos, 1000);
         }
+        
+        console.log("Respuesta enviada correctamente a Google Sheets");
 
       } catch (error) {
         console.error("Error al enviar datos:", error);
@@ -313,30 +323,30 @@
       const panel = document.getElementById('adminPanel');
       if (panel.style.display === 'none' || panel.style.display === '') {
         panel.style.display = 'block';
-        actualizarStats();
+        cargarDatos();
       } else {
         panel.style.display = 'none';
       }
     }
 
     function actualizarStats() {
-      const respuestasData = JSON.parse(safeGetItem('mood_responses') || '[]');
       const statsDiv = document.getElementById('statsDisplay');
       
-      if (respuestasData.length === 0) {
+      if (datosServidor.length === 0) {
         statsDiv.innerHTML = '<div>No hay respuestas aún</div>';
         return;
       }
 
       // Calcular estadísticas básicas
-      const total = respuestasData.length;
-      const suma = respuestasData.reduce((acc, r) => acc + r.mood, 0);
+      const total = datosServidor.length;
+      const suma = datosServidor.reduce((acc, r) => acc + parseInt(r.Estado_Animo || r.mood || 0), 0);
       const promedio = (suma / total).toFixed(1);
       
       // Contar por nivel de ánimo
       const conteos = {};
-      respuestasData.forEach(r => {
-        conteos[r.mood] = (conteos[r.mood] || 0) + 1;
+      datosServidor.forEach(r => {
+        const mood = parseInt(r.Estado_Animo || r.mood || 0);
+        conteos[mood] = (conteos[mood] || 0) + 1;
       });
 
       let html = `
@@ -356,17 +366,17 @@
     }
 
     function exportarDatos() {
-      const respuestasData = JSON.parse(safeGetItem('mood_responses') || '[]');
-      
-      if (respuestasData.length === 0) {
-        alert('No hay datos para exportar');
+      if (datosServidor.length === 0) {
+        alert('No hay datos para exportar. Primero carga los datos.');
         return;
       }
 
       // Crear CSV simple
       let csv = 'Fecha,Estado_Animo\n';
-      respuestasData.forEach(r => {
-        csv += `"${r.fecha}",${r.mood}\n`;
+      datosServidor.forEach(r => {
+        const fecha = r.Fecha || r.fecha || '';
+        const mood = r.Estado_Animo || r.mood || '';
+        csv += `"${fecha}",${mood}\n`;
       });
 
       // Descargar
@@ -379,21 +389,6 @@
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    }
-
-    function limpiarDatos() {
-      if (confirm('¿Estás seguro de que quieres eliminar todos los datos?')) {
-        try {
-          localStorage.removeItem('mood_responses');
-          localStorage.removeItem('user_submitted_today');
-        } catch (e) {
-          // Si localStorage no funciona, limpiar variables globales
-          respuestas = [];
-          userSubmitted = false;
-        }
-        actualizarStats();
-        alert('Datos eliminados');
-      }
     }
 
     // === BALLPIT ANIMATION ===
@@ -411,7 +406,7 @@
     }
 
     function createBalls(n = 60) {
-      balls.length = 0; // Limpiar array primero
+      balls.length = 0;
       for (let i = 0; i < n; i++) {
         balls.push({
           x: Math.random() * w,
@@ -444,11 +439,9 @@
 
       // Animar bolas
       for (let b of balls) {
-        // Ruido aleatorio
         b.vx += (Math.random() - 0.5) * 0.2;
         b.vy += (Math.random() - 0.5) * 0.2;
 
-        // Repulsión del mouse
         const dx = b.x - mouse.x;
         const dy = b.y - mouse.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -458,11 +451,9 @@
           b.vy += dy / dist * f * 2.5;
         }
 
-        // Actualizar posición
         b.x += b.vx;
         b.y += b.vy;
 
-        // Rebotar en bordes
         if (b.x < b.r || b.x > w - b.r) {
           b.vx *= -0.8;
           b.x = Math.max(b.r, Math.min(w - b.r, b.x));
@@ -472,11 +463,9 @@
           b.y = Math.max(b.r, Math.min(h - b.r, b.y));
         }
 
-        // Fricción
         b.vx *= 0.93;
         b.vy *= 0.93;
 
-        // Dibujar bola
         ctx.beginPath();
         ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
         ctx.fillStyle = b.color;
@@ -499,11 +488,16 @@
       requestAnimationFrame(animate);
     }
 
-    // Event listeners
+    // Event listeners para el canvas
     canvas.addEventListener("mousemove", e => {
       const rect = canvas.getBoundingClientRect();
       mouse.x = e.clientX - rect.left;
       mouse.y = e.clientY - rect.top;
+    });
+
+    canvas.addEventListener("mouseleave", () => {
+      mouse.x = -9999;
+      mouse.y = -9999;
     });
 
     window.addEventListener("resize", () => {
@@ -512,16 +506,13 @@
     });
     
     // Verificar si ya se envió al cargar la página
-    const yaEnviado = safeGetItem('user_submitted_today');
-    const hoy = new Date().toDateString();
-    
-    if (yaEnviado === hoy) {
+    if (yaEnvioHoy()) {
       slider.disabled = true;
       document.getElementById("submitBtn").style.display = "none";
       document.getElementById("thanks").style.display = "block";
     }
 
-    // Inicializar
+    // Inicializar ballpit
     resize();
     createBalls();
     animate();
